@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(where dotnet:*)",
+      "Bash(dotnet new:*)",
+      "Bash(dotnet help:*)",
+      "Bash(dotnet publish:*)",
+      "Read(//tmp/**)",
+      "Bash(rm -rf /tmp/wf_probe)",
+      "Bash(cat /tmp/console_probe/*.csproj)",
+      "Bash(rm -rf /tmp/console_probe)",
+      "Bash(dotnet build:*)"
+    ]
+  }
+}
