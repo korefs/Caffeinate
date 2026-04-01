@@ -9,3 +9,4 @@ obj/
 
 # Publish output
 publish/
+.claude
