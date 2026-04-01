@@ -17,7 +17,8 @@ static class Program
 sealed class CaffeinateContext : ApplicationContext
 {
     private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AppName = "Caffeinate";
+    private const string AppRegistryKey     = @"Software\Caffeinate";
+    private const string AppName            = "Caffeinate";
 
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _toggleItem;
@@ -27,52 +28,146 @@ sealed class CaffeinateContext : ApplicationContext
     private readonly IntPtr _iconOnHandle;
     private readonly IntPtr _iconOffHandle;
     private bool _isActive;
+    private System.Windows.Forms.Timer? _timer;
+    private DateTime _expiresAt;
 
     public CaffeinateContext()
     {
         (_iconOff, _iconOffHandle) = CreateCircleIcon(Color.FromArgb(130, 130, 130));
-        (_iconOn, _iconOnHandle)   = CreateCircleIcon(Color.FromArgb(255, 160, 0));
+        (_iconOn,  _iconOnHandle)  = CreateCircleIcon(Color.FromArgb(255, 160, 0));
 
-        _toggleItem = new ToolStripMenuItem("Caffeinate") { CheckOnClick = false };
+        _toggleItem       = new ToolStripMenuItem("Caffeinate") { CheckOnClick = false };
         _toggleItem.Click += (_, _) => Toggle();
 
-        _startupItem = new ToolStripMenuItem("Start with Windows") { CheckOnClick = false, Checked = IsStartupEnabled() };
+        var timedMenu = new ToolStripMenuItem("Activate for...");
+        foreach (var hours in new[] { 1, 2, 4, 8 })
+        {
+            var h    = hours;
+            var item = new ToolStripMenuItem($"{h} hour{(h > 1 ? "s" : "")}");
+            item.Click += (_, _) => ActivateFor(h);
+            timedMenu.DropDownItems.Add(item);
+        }
+
+        _startupItem       = new ToolStripMenuItem("Start with Windows") { CheckOnClick = false, Checked = IsStartupEnabled() };
         _startupItem.Click += (_, _) => ToggleStartup();
 
-        var exitItem = new ToolStripMenuItem("Exit");
+        var exitItem  = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => Exit();
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(_toggleItem);
+        menu.Items.Add(timedMenu);
         menu.Items.Add(_startupItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(exitItem);
 
         _trayIcon = new NotifyIcon
         {
-            Text = "Caffeinate — Inactive",
-            Icon = _iconOff,
+            Text             = "Caffeinate — Inactive",
+            Icon             = _iconOff,
             ContextMenuStrip = menu,
-            Visible = true
+            Visible          = true
         };
 
         _trayIcon.MouseDoubleClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Left) Toggle();
         };
+
+        if (GetLastActiveState())
+            Toggle();
     }
 
     private void Toggle()
     {
+        CancelTimer();
         _isActive = !_isActive;
+        ApplyExecutionState();
+        _toggleItem.Checked = _isActive;
+        _trayIcon.Icon      = _isActive ? _iconOn : _iconOff;
+        UpdateTrayText();
+    }
 
+    private void ActivateFor(int hours)
+    {
+        CancelTimer();
+
+        if (!_isActive)
+        {
+            _isActive           = true;
+            _toggleItem.Checked = true;
+            _trayIcon.Icon      = _iconOn;
+            ApplyExecutionState();
+        }
+
+        _expiresAt   = DateTime.Now.AddHours(hours);
+        _timer       = new System.Windows.Forms.Timer { Interval = 30_000 };
+        _timer.Tick += OnTimerTick;
+        _timer.Start();
+        UpdateTrayText();
+    }
+
+    private void OnTimerTick(object? sender, EventArgs e)
+    {
+        if (DateTime.Now >= _expiresAt)
+        {
+            CancelTimer();
+            _isActive           = false;
+            _toggleItem.Checked = false;
+            _trayIcon.Icon      = _iconOff;
+            ApplyExecutionState();
+        }
+
+        UpdateTrayText();
+    }
+
+    private void CancelTimer()
+    {
+        if (_timer is null) return;
+        _timer.Stop();
+        _timer.Dispose();
+        _timer = null;
+    }
+
+    private void ApplyExecutionState()
+    {
         NativeMethods.SetThreadExecutionState(_isActive
             ? NativeMethods.EXECUTION_STATE.ES_CONTINUOUS | NativeMethods.EXECUTION_STATE.ES_SYSTEM_REQUIRED | NativeMethods.EXECUTION_STATE.ES_DISPLAY_REQUIRED
             : NativeMethods.EXECUTION_STATE.ES_CONTINUOUS);
+    }
 
-        _toggleItem.Checked = _isActive;
-        _trayIcon.Icon      = _isActive ? _iconOn : _iconOff;
-        _trayIcon.Text      = _isActive ? "Caffeinate — Active" : "Caffeinate — Inactive";
+    private void UpdateTrayText()
+    {
+        if (!_isActive)
+        {
+            _trayIcon.Text = "Caffeinate — Inactive";
+            return;
+        }
+
+        if (_timer is not null)
+        {
+            var remaining = _expiresAt - DateTime.Now;
+            var text = remaining.TotalMinutes >= 60
+                ? $"Caffeinate — Active ({(int)remaining.TotalHours}h {remaining.Minutes:D2}m left)"
+                : $"Caffeinate — Active ({(int)remaining.TotalMinutes}m left)";
+            _trayIcon.Text = text.Length > 63 ? text[..63] : text;
+        }
+        else
+        {
+            _trayIcon.Text = "Caffeinate — Active";
+        }
+    }
+
+    private static bool GetLastActiveState()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(AppRegistryKey);
+        return key?.GetValue("WasActive") is int val && val == 1;
+    }
+
+    private static void SaveActiveState(bool isActive)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(AppRegistryKey);
+        key.SetValue("WasActive", isActive ? 1 : 0, RegistryValueKind.DWord);
     }
 
     private static bool IsStartupEnabled()
@@ -96,6 +191,8 @@ sealed class CaffeinateContext : ApplicationContext
 
     private void Exit()
     {
+        SaveActiveState(_isActive);
+        CancelTimer();
         _trayIcon.Visible = false;
         if (_isActive)
             NativeMethods.SetThreadExecutionState(NativeMethods.EXECUTION_STATE.ES_CONTINUOUS);
@@ -106,6 +203,7 @@ sealed class CaffeinateContext : ApplicationContext
     {
         if (disposing)
         {
+            CancelTimer();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
             _iconOn.Dispose();
@@ -134,9 +232,9 @@ static class NativeMethods
     [Flags]
     internal enum EXECUTION_STATE : uint
     {
-        ES_CONTINUOUS        = 0x80000000,
-        ES_SYSTEM_REQUIRED   = 0x00000001,
-        ES_DISPLAY_REQUIRED  = 0x00000002,
+        ES_CONTINUOUS       = 0x80000000,
+        ES_SYSTEM_REQUIRED  = 0x00000001,
+        ES_DISPLAY_REQUIRED = 0x00000002,
     }
 
     [DllImport("kernel32.dll", SetLastError = false)]
