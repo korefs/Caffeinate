@@ -67,13 +67,6 @@ dotnet publish -c Release -r win-x64 --self-contained false
 
 Output: `bin/Release/net9.0-windows/win-x64/publish/Caffeinate.exe`
 
-A GitHub Actions workflow is included — push a `v*` tag to automatically publish a release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
 ## How it works
 
 Uses the Windows [`SetThreadExecutionState`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate) API with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED` to block sleep. No polling or timers for the core keep-awake logic — a single API call persists until toggled off or the process exits.
