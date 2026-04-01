@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 static class Program
 {
@@ -15,8 +16,12 @@ static class Program
 
 sealed class CaffeinateContext : ApplicationContext
 {
+    private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string AppName = "Caffeinate";
+
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _toggleItem;
+    private readonly ToolStripMenuItem _startupItem;
     private readonly Icon _iconOn;
     private readonly Icon _iconOff;
     private readonly IntPtr _iconOnHandle;
@@ -31,11 +36,15 @@ sealed class CaffeinateContext : ApplicationContext
         _toggleItem = new ToolStripMenuItem("Caffeinate") { CheckOnClick = false };
         _toggleItem.Click += (_, _) => Toggle();
 
+        _startupItem = new ToolStripMenuItem("Start with Windows") { CheckOnClick = false, Checked = IsStartupEnabled() };
+        _startupItem.Click += (_, _) => ToggleStartup();
+
         var exitItem = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => Exit();
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(_toggleItem);
+        menu.Items.Add(_startupItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(exitItem);
 
@@ -64,6 +73,25 @@ sealed class CaffeinateContext : ApplicationContext
         _toggleItem.Checked = _isActive;
         _trayIcon.Icon      = _isActive ? _iconOn : _iconOff;
         _trayIcon.Text      = _isActive ? "Caffeinate — Active" : "Caffeinate — Inactive";
+    }
+
+    private static bool IsStartupEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, writable: false);
+        return key?.GetValue(AppName) is string val && val == Application.ExecutablePath;
+    }
+
+    private void ToggleStartup()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, writable: true);
+        if (key is null) return;
+
+        if (_startupItem.Checked)
+            key.DeleteValue(AppName, throwOnMissingValue: false);
+        else
+            key.SetValue(AppName, Application.ExecutablePath);
+
+        _startupItem.Checked = !_startupItem.Checked;
     }
 
     private void Exit()
